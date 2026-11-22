@@ -13,7 +13,7 @@
   #tabs button.on { color: #fff; border-bottom-color: #fff; }
   .view { display: none; flex: 1; min-height: 0; position: relative; }
   .view.on { display: block; }
-  #discussion { overflow: auto; padding: 12px; }
+  #discussion, #recettes { overflow: auto; padding: 12px; }
   #map { height: 100%; }
   #panel {
     position: absolute; z-index: 1001; top: 8px; left: 8px; right: 8px; max-width: 440px;
@@ -42,6 +42,7 @@
 <nav id="tabs">
   <button data-view="velib" class="on">Vélib’</button>
   <button data-view="discussion">Discussion</button>
+  <button data-view="recettes">Recettes</button>
 </nav>
 <section id="velib" class="view on">
 <div id="map"></div>
@@ -61,8 +62,10 @@
 </div>
 </section>
 <section id="discussion" class="view"><div id="giscus-box"></div></section>
+<section id="recettes" class="view"><div id="recettes-root"></div></section>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="recettes.js" defer></script>   <!-- onglet Recettes : fichier séparé -->
 <script type="module">
 const GISCUS = {"repo": "Enzo421/velib-site", "repoId": "R_kgDOV3rLcA", "category": "General", "categoryId": "DIC_kwDOV3rLcM4DLuZi"};
 // Les données sont dans data.json (mis à jour séparément de la page).
@@ -200,7 +203,8 @@ document.querySelectorAll("#tabs button").forEach(b => b.onclick = () => {
   document.querySelectorAll("#tabs button").forEach(x => x.classList.toggle("on", x === b));
   document.querySelectorAll(".view").forEach(v => v.classList.toggle("on", v.id === b.dataset.view));
   if (b.dataset.view === "velib") map.invalidateSize();   // la carte était masquée
-  else loadDiscussion();
+  else if (b.dataset.view === "discussion") loadDiscussion();
+  else if (b.dataset.view === "recettes" && window.recettesShow) window.recettesShow();
 });
 </script>
 </body>
