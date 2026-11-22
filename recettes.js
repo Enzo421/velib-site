@@ -25,9 +25,10 @@
   const b64dec = b => new TextDecoder().decode(Uint8Array.from(atob(b.replace(/\s/g, "")), c => c.charCodeAt(0)));
   const pad = n => String(n).padStart(2, "0");
   const iso = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-  const startOfToday = () => {
-    const n = new Date();
-    return new Date(n.getFullYear(), n.getMonth(), n.getDate());
+  const monday = d => {
+    const x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    x.setDate(x.getDate() - ((x.getDay() + 6) % 7));
+    return x;
   };
   const h = (tag, props = {}, ...kids) => {
     const el = document.createElement(tag);
@@ -39,7 +40,7 @@
   // ---------- état ----------
   let token = store.get(TOKEN_KEY);
   let data = {};                      // { "2026-11-23": { midi: "...", soir: "..." } }
-  let weekStart = startOfToday();      // on affiche les 7 jours à venir, à partir d’aujourd’hui
+  let weekStart = monday(new Date());
   let pending = {};                   // modifications pas encore enregistrées
   let timer = null;
   let queue = Promise.resolve();
@@ -155,7 +156,7 @@
       h("button", { textContent: "◀", onclick: shift(-7) }),
       h("b", { textContent: `${fmt(weekStart)} – ${fmt(end)}` }),
       h("button", { textContent: "▶", onclick: shift(7) }),
-      h("button", { textContent: "Aujourd’hui", onclick: () => { weekStart = startOfToday(); render(); } })));
+      h("button", { textContent: "Aujourd’hui", onclick: () => { weekStart = monday(new Date()); render(); } })));
 
     const today = iso(new Date());
     for (let i = 0; i < 7; i++) {
