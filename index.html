@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vélib’ – disponibilités</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+  html, body { height: 100%; margin: 0; }
+  body { display: flex; flex-direction: column; font-family: system-ui, sans-serif; }
+  #tabs { display: flex; background: #1565c0; }
+  #tabs button { flex: 1; padding: 12px 4px; border: 0; background: none; color: #cfe0f5; font: 600 15px system-ui, sans-serif; border-bottom: 3px solid transparent; cursor: pointer; }
+  #tabs button.on { color: #fff; border-bottom-color: #fff; }
+  .view { display: none; flex: 1; min-height: 0; position: relative; }
+  .view.on { display: block; }
+  #discussion { overflow: auto; padding: 12px; }
+  #map { height: 100%; }
+  #panel {
+    position: absolute; z-index: 1001; top: 8px; left: 8px; right: 8px; max-width: 440px;
+    background: rgba(255,255,255,.96); color: #111; border-radius: 10px; padding: 8px;
+    box-shadow: 0 1px 6px rgba(0,0,0,.35); font: 13px system-ui, sans-serif;
+  }
+  .row { display: flex; gap: 4px; margin-bottom: 6px; }
+  .row button {
+    flex: 1; padding: 7px 4px; border: 1px solid #bbb; background: #f4f4f4; color: #111;
+    border-radius: 6px; font: inherit; cursor: pointer;
+  }
+  .row button.on { background: #1565c0; border-color: #1565c0; color: #fff; }
+  #status { line-height: 1.4; }
+  #status.warn { color: #c62828; font-weight: 600; }
+  #legend { margin-top: 4px; font-size: 12px; }
+  .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin: 0 3px 0 8px; vertical-align: middle; }
+  @media (prefers-color-scheme: dark) {
+    #panel { background: rgba(30,30,30,.96); color: #eee; }
+    .row button { background: #333; color: #eee; border-color: #555; }
+    .row button.on { background: #1e88e5; border-color: #1e88e5; color: #fff; }
+    #status.warn { color: #ef9a9a; }
+  }
+</style>
+</head>
+<body>
+<nav id="tabs">
+  <button data-view="velib" class="on">Vélib’</button>
+  <button data-view="discussion">Discussion</button>
+</nav>
+<section id="velib" class="view on">
+<div id="map"></div>
+<div id="panel">
+  <div class="row" id="modes">
+    <button data-mode="bikes" class="on">Prendre un vélo</button>
+    <button data-mode="docks">Déposer un vélo</button>
+  </div>
+  <div class="row" id="horizons"></div>
+  <div id="status"></div>
+  <div id="legend">
+    <span class="dot" style="background:#d32f2f;margin-left:0"></span>0
+    <span class="dot" style="background:#f57c00"></span>1–2
+    <span class="dot" style="background:#2e7d32"></span>3 et +
+    <span class="dot" style="background:#9e9e9e"></span>indisponible
+  </div>
+</div>
+</section>
+<section id="discussion" class="view"><div id="giscus-box"></div></section>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script type="module">
+const GISCUS = {"repo": "Enzo421/velib-site", "repoId": "R_kgDOV3rLcA", "category": "General", "categoryId": "DIC_kwDOV3rLcM4DLuZi"};
+// Les données sont dans data.json (mis à jour séparément de la page).
+const DATA = await (await fetch("data.json", { cache: "no-store" })).json();
+const GREY = "#9e9e9e";
+const state = { mode: "bikes", h: 0 };
+
+// ---- carte ----
+const map = L.map("map", { preferCanvas: true });
+// Fond de carte : Plan IGN (Géoplateforme), service « découverte » gratuit et sans clé.
+// (openstreetmap.org refuse les pages ouvertes depuis un fichier local, et CARTO exige désormais une clé.)
+const tiles = L.tileLayer(
+  "https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0" +
+  "&LAYER=GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2&STYLE=normal&FORMAT=image/png" +
+  "&TILEMATRIXSET=PM&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}",
+  { maxZoom: 19, attribution: "Carte &copy; IGN/Géoplateforme" }
+).addTo(map);
+let tileErrors = 0;
+tiles.on("tileerror", () => {
+  if (++tileErrors === 5) {
+    document.getElementById("legend").insertAdjacentHTML("beforeend",
+      "<br><b>Fond de carte indisponible</b> (voir la console du navigateur)");
+  }
+});
+map.fitBounds(L.latLngBounds(DATA.stations.map(s => [s.la, s.lo])));
+
+// ---- valeurs affichées selon le mode (vélos / bornettes) et l’horizon ----
+const bikesAt = (s, h) => h === 0 ? s.b : (s.p[h] ?? s.b);
+const docksAt = (s, h) => Math.max(s.b + s.d - bikesAt(s, h), 0);
+const valueOf = s => state.mode === "bikes" ? bikesAt(s, state.h) : docksAt(s, state.h);
+const usable  = s => state.mode === "bikes" ? s.r : s.t;
+
+function colorOf(s) {
+  if (!usable(s)) return GREY;
+  const v = valueOf(s);
+  return v <= 0 ? "#d32f2f" : v <= 2 ? "#f57c00" : "#2e7d32";
+}
+
+const esc = t => String(t ?? "").replace(/[&<>"']/g, c =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+function popupHtml(s) {
+  const lines = [`<b>${esc(s.n)}</b>`];
+  lines.push(`Vélos : <b>${s.b}</b>` + (s.m != null ? ` (${s.m} méca., ${s.e ?? 0} élec.)` : ""));
+  lines.push(`Bornettes libres : <b>${s.d}</b>`);
+  if (!s.r || !s.t) lines.push("<i>Station partiellement ou totalement hors service</i>");
+  for (const h of DATA.horizons) lines.push(`Dans ${h} min : ${bikesAt(s, h)} vélos`);
+  return lines.join("<br>");
+}
+
+// ---- marqueurs (créés une fois, recolorés ensuite) ----
+// Taille des points selon le zoom : petits quand on voit tout Paris, plus gros de près.
+const radiusFor = z => z <= 11 ? 3 : z === 12 ? 4 : z === 13 ? 5 : z === 14 ? 6 : 8;
+const markers = DATA.stations.map(s => {
+  const m = L.circleMarker([s.la, s.lo], { radius: radiusFor(map.getZoom()), weight: 1, color: "#fff", fillOpacity: 0.9 });
+  m.bindPopup(() => popupHtml(s));
+  m.addTo(map);
+  return { s, m };
+});
+
+map.on("zoomend", () => {
+  const r = radiusFor(map.getZoom());
+  markers.forEach(({ m }) => m.setRadius(r));
+});
+
+// ---- panneau ----
+const hz = document.getElementById("horizons");
+for (const h of [0, ...DATA.horizons]) {
+  const b = document.createElement("button");
+  b.dataset.h = h;
+  b.textContent = h === 0 ? "Maintenant" : `+${h} min`;
+  if (h === 0) b.className = "on";
+  hz.appendChild(b);
+}
+
+function setOn(sel, btn) {
+  document.querySelectorAll(sel + " button").forEach(b => b.classList.remove("on"));
+  btn.classList.add("on");
+}
+document.querySelectorAll("#modes button").forEach(b => b.onclick = () => {
+  state.mode = b.dataset.mode; setOn("#modes", b); refresh();
+});
+document.querySelectorAll("#horizons button").forEach(b => b.onclick = () => {
+  state.h = +b.dataset.h; setOn("#horizons", b); refresh();
+});
+
+function ageText(min) {
+  if (min < 120) return `${min} min`;
+  return `${Math.round(min / 60)} h`;
+}
+
+function refresh() {
+  let empty = 0;
+  for (const { s, m } of markers) {
+    m.setStyle({ fillColor: colorOf(s) });
+    if (usable(s) && valueOf(s) <= 0) empty++;
+  }
+  const ageMin = Math.max(0, Math.round((Date.now() / 1000 - DATA.ts) / 60));
+  const hhmm = new Date(DATA.ts * 1000).toLocaleTimeString("fr-FR",
+    { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Paris" });
+  const what = state.mode === "bikes" ? "sans vélo" : "sans bornette libre";
+  const horizon = state.h === 0 ? "" : ` · prévision +${state.h} min`;
+  const status = document.getElementById("status");
+  status.textContent = `Relevé de ${hhmm} (il y a ${ageText(ageMin)}) · ${empty} stations ${what}${horizon}` +
+    ` · modèle : ${DATA.model}`;
+  status.classList.toggle("warn", ageMin > 15);
+}
+refresh();
+
+// ---- onglets ----
+let giscusLoaded = false;
+function loadDiscussion() {
+  if (giscusLoaded) return;
+  giscusLoaded = true;
+  const box = document.getElementById("giscus-box");
+  if (!GISCUS.repo) {
+    box.textContent = "Discussion non configurée : renseignez GISCUS dans build_map.py (voir giscus.app).";
+    return;
+  }
+  const sc = document.createElement("script");
+  sc.src = "https://giscus.app/client.js";
+  sc.crossOrigin = "anonymous";
+  sc.async = true;
+  const attrs = {
+    "data-repo": GISCUS.repo, "data-repo-id": GISCUS.repoId,
+    "data-category": GISCUS.category, "data-category-id": GISCUS.categoryId,
+    "data-mapping": "specific", "data-term": "discussion", "data-strict": "0",
+    "data-reactions-enabled": "1", "data-input-position": "top",
+    "data-theme": "preferred_color_scheme", "data-lang": "fr"
+  };
+  for (const [k, v] of Object.entries(attrs)) sc.setAttribute(k, v);
+  box.appendChild(sc);
+}
+document.querySelectorAll("#tabs button").forEach(b => b.onclick = () => {
+  document.querySelectorAll("#tabs button").forEach(x => x.classList.toggle("on", x === b));
+  document.querySelectorAll(".view").forEach(v => v.classList.toggle("on", v.id === b.dataset.view));
+  if (b.dataset.view === "velib") map.invalidateSize();   // la carte était masquée
+  else loadDiscussion();
+});
+</script>
+</body>
+</html>
